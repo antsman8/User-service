@@ -5,12 +5,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { Repository } from 'typeorm';
 import * as argon2 from 'argon2';
+import axios from 'axios';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User) private userRepository: Repository<User>,
   ) {}
+
   async create(createUserDto: CreateUserDto) {
     const existUser = await this.userRepository.findOne({
       where: {
@@ -18,11 +20,23 @@ export class UserService {
       },
     });
     if (existUser) throw new BadRequestException('This user already exist');
+
+    const hashedPassword = await argon2.hash(createUserDto.password);
     const user = await this.userRepository.save({
-      email: createUserDto.email,
-      password: await argon2.hash(createUserDto.password),
+      ...createUserDto,
+      password: hashedPassword,
     });
-    return { user };
+
+    axios
+      .post('http://localhost:3001/api/events', {
+        type: 'USER_CREATED',
+        payload: { id: user.id, email: user.email },
+      })
+      .catch((error) => {
+        console.error('Ошибка при отправке события USER_CREATED:', error);
+      });
+
+    return { id: user.id, email: user.email };
   }
 
   async findAll() {
@@ -38,6 +52,16 @@ export class UserService {
     }
 
     await this.userRepository.update(id, updateUserDto);
+
+    axios
+      .post('http://localhost:3001/api/events', {
+        type: 'USER_UPDATED',
+        payload: { id, ...updateUserDto },
+      })
+      .catch((error) => {
+        console.error('Ошибка при отправке события USER_UPDATED:', error);
+      });
+
     return this.userRepository.findOne({
       where: { id },
     });
